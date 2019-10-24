@@ -1,9 +1,9 @@
-function [sOut]=calculate_fragment_response(FR_OPTION, cFragIn,cStimListIn )
+function [dOut]=calculate_fragment_response(FR_OPTION, sFragIn,cStimListIn )
 
 
 %% Convert image to fit to CNS module
     nStim=size(cStimListIn,2);
-    nBand=length(cFragIn.iBandRange);
+    nBand=length(sFragIn.iBandRange);
     [nStimHeight nStimWidth,iDummy] = size(cStimListIn{1});
     cStimOri=cell(1,nStim);
     cStimColor=cell(1,nStim);
@@ -17,14 +17,17 @@ function [sOut]=calculate_fragment_response(FR_OPTION, cFragIn,cStimListIn )
     end
     
 %% Prepare variables
-    iFragSize=size(cFragIn.dFeatureCandidate,2);
+    iFragSize=size(sFragIn.dFeatureCandidate,2);
     dBackgroundGray=128/255;% GRAY = 0.502 (=128/255)
-    
+
 %% Loop for each band    
     CNS=FR_OPTION.CNS;
     dMinDistInEachBand=zeros(nBand,nStim);
+        % Distance for each band will be calculated, then the minimum
+        % will be found.
+        
     for iBandIndex=1:nBand
-        iBand=cFragIn.iBandRange(iBandIndex);
+        iBand=sFragIn.iBandRange(iBandIndex);
         fprintf(1,'[band: %d]\n',iBand);
         %% Initialize model for ORI and Color
         % variable for Gabor filter            
@@ -43,7 +46,7 @@ function [sOut]=calculate_fragment_response(FR_OPTION, cFragIn,cStimListIn )
         q.bufSize   = iPadSize; q.baseSize  = iPadSize; q.numScales = 1;
         p = fhm_params(q,CNS.s2_type,iFragSize,s1_fVals,CNS.iC1SP(iBand));
         lib=struct;lib.groups{p.s2} = set_dict(...
-            cFragIn.dFeatureCandidate(1:4,:,:),1,cFragIn.iMaskPos);
+            sFragIn.dFeatureCandidate(1:4,:,:),1,sFragIn.iMaskPos);
         m = fhpkg_model(p, lib);
 
         % The same procedure for RGB channels
@@ -57,11 +60,13 @@ function [sOut]=calculate_fragment_response(FR_OPTION, cFragIn,cStimListIn )
         iPadPosX_col = bd_col+1   :   bd_col+nStimWidth;
         p_col = fhm_params_col(iPadSize_col, CNS.s2_type,iFragSize, CNS.iC1SP(iBand));
         lib=struct;lib.groups{p_col.s2}=set_dict(...,
-            cFragIn.dFeatureCandidate(5:7,:,:),1,cFragIn.iMaskPos);
+            sFragIn.dFeatureCandidate(5:7,:,:),1,sFragIn.iMaskPos);
         m_col = fhpkg_model( p_col, lib);
         
         %%  run CNS for local orientations
         s2_all=zeros(nStim,m.layers{p.s2}.size{2},m.layers{p.s2}.size{3},'single');
+            % each slice of s2_all is corresponding to 
+            % \sum(| f_o - s_o |^2) in (3) of the manuscript.
         cns('init', m, CNS.platform);
         fprintf(1,'   ORI: ');
         for iStim=1:nStim % replace image and repeat
@@ -71,11 +76,14 @@ function [sOut]=calculate_fragment_response(FR_OPTION, cFragIn,cStimListIn )
             cns('run');                  % run!
             s2_all(iStim,:,:) =  cns('get',m.groups{p.s2}.zs, 'val') ; % get activation map for S2
         end
+
         fprintf(1,'\n');
         cns('done'); % release CNS.
 
         %% run CNS for colors
         s2_all_col=zeros(nStim,m_col.layers{p_col.s2}.size{2},m_col.layers{p_col.s2}.size{3},'single');
+            % each slice of s2_all is corresponding to 
+            % \sum(| f_c - s_c |^2) in (3) of the manuscript.
         cns('init', m_col, CNS.platform);
         fprintf(1,'   CLR: ');
         for iStim=1:nStim % replace image and repeat
@@ -92,13 +100,17 @@ function [sOut]=calculate_fragment_response(FR_OPTION, cFragIn,cStimListIn )
             
         
         %% Blend ORI and color activation maps with blending ratio (alpha)
-        dBlended=cFragIn.dBlendRatio*s2_all+(1-cFragIn.dBlendRatio)*s2_all_col;
+        dBlended=sFragIn.dBlendRatio*s2_all+(1-sFragIn.dBlendRatio)*s2_all_col;
         dMinDistInEachBand(iBandIndex,:) = min(min(dBlended, [], 3), [], 2);
-        
+            % each element of dMinDistInEachBand is corresponing to d' 
+            % in the manuscript.
+
     end
     
-    sOut.dRes=exp(-1*min(dMinDistInEachBand,[],1));
- 
+    dOut=exp(-1*min(dMinDistInEachBand,[],1));
+        % Find the minimum across the bands, and transfer with RBF.
+        % each element of this vector is corresponding to x in (5)
+        % of the manuscript.
     
 end
 
